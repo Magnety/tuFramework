@@ -4,7 +4,7 @@ import random
 from functools import wraps, partial
 from math import floor
 from tuframework.network_architecture.neural_network import SegmentationNetwork
-
+from tuframework.pixelCL import CNNBackbone
 import torch
 from torch import nn, einsum
 import torch.nn.functional as F
@@ -15,126 +15,7 @@ from kornia import filters, color
 from einops import rearrange
 
 # helper functions
-class ResNeXt3D(nn.Module):
 
-    def __init__(self, block, layers, shortcut_type='B', cardinality=32, num_classes=400):
-        self.inplanes = 64
-        super(ResNeXt3D, self).__init__()
-        self.conv1 = nn.Conv3d(1, 64, kernel_size=7, stride=(1, 2, 2), padding=(3, 3, 3), bias=False)
-        # self.bn1 = nn.BatchNorm3d(64)
-        self.gn1 = nn.GroupNorm(32, 64)
-        self.relu = nn.PReLU()
-        self.maxpool = nn.MaxPool3d(kernel_size=(3, 3, 3), stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0], shortcut_type, cardinality)
-        self.layer2 = self._make_layer(block, 128, layers[1], shortcut_type, cardinality, stride=(1, 2, 2))
-        self.layer3 = self._make_layer(block, 256, layers[2], shortcut_type, cardinality, stride=1)
-        self.layer4 = self._make_layer(block, 512, layers[3], shortcut_type, cardinality, stride=1)
-        self.avgpool = nn.AdaptiveAvgPool3d(1)
-        self.fc = nn.Linear(1024, num_classes)
-        for m in self.modules():
-            if isinstance(m, nn.Conv3d):
-                m.weight = nn.init.kaiming_normal(m.weight, mode='fan_out')
-            elif isinstance(m, nn.BatchNorm3d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-    def _make_layer(self, block, planes, blocks, shortcut_type, cardinality, stride=1):
-        downsample = None
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                nn.Conv3d(
-                    self.inplanes,
-                    planes * block.expansion,
-                    kernel_size=1,
-                    stride=stride,
-                    bias=False),
-                # nn.BatchNorm3d(planes * block.expansion)
-                nn.GroupNorm(32, planes * block.expansion),
-            )
-        layers = []
-        layers.append(
-            block(self.inplanes, planes, cardinality, stride, downsample))
-        self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, cardinality))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        ##print("RES:x.shape:",x.shape)
-        x = self.conv1(x)
-        ##print("RES:x.shape:",x.shape)
-        x = self.gn1(x)
-        ##print("RES:x.shape:",x.shape)
-        x = self.relu(x)
-        ##print("RES:x.shape:",x.shape)
-        x = self.maxpool(x)
-        ##print("RES:x.shape:",x.shape)
-
-
-        x = self.layer1(x)
-        ##print("RES:x.shape:",x.shape)
-
-        x = self.layer2(x)
-        ##print("RES:x.shape:",x.shape)
-
-        x = self.layer3(x)
-        ##print("RES:x.shape:",x.shape)
-        pixel_out = self.layer4(x)
-        ##print("RES:x.shape:",x.shape)
-        instance_out = self.avgpool(pixel_out)
-        ##print("RES:x.shape:",x.shape)
-        instance_out = instance_out.view(instance_out.size(0), -1)
-        ##print("RES:x.shape:",x.shape)
-        ####print("RES:x.shape:",x.shape)
-        return pixel_out,instance_out
-class ResNeXtBottleneck(nn.Module):
-    expansion = 2
-    def __init__(self, inplanes, planes, cardinality, stride=1,
-                 downsample=None):
-        super(ResNeXtBottleneck, self).__init__()
-        mid_planes = cardinality * int(planes / 32)
-        self.conv1 = nn.Conv3d(inplanes, mid_planes, kernel_size=1, bias=False)
-        self.gn1 = nn.GroupNorm(32, mid_planes)
-        # self.bn1 = nn.BatchNorm3d(mid_planes)
-        self.conv2 = nn.Conv3d(
-            mid_planes,
-            mid_planes,
-            kernel_size=3,
-            stride=stride,
-            padding=1,
-            groups=cardinality,
-            bias=False)
-        self.gn2 = nn.GroupNorm(32, mid_planes)
-        # self.bn2 = nn.BatchNorm3d(mid_planes)
-        self.conv3 = nn.Conv3d(
-            mid_planes, planes * self.expansion, kernel_size=1, bias=False)
-        # self.bn3 = nn.BatchNorm3d(planes * self.expansion)
-        self.gn3 = nn.GroupNorm(32, planes * self.expansion)
-        self.relu = nn.PReLU()
-        self.downsample = downsample
-        self.stride = stride
-
-    def forward(self, x):
-        residual = x
-
-        out = self.conv1(x)
-        out = self.gn1(out)
-        out = self.relu(out)
-
-        out = self.conv2(out)
-        out = self.gn2(out)
-        out = self.relu(out)
-
-        out = self.conv3(out)
-        out = self.gn3(out)
-
-        if self.downsample is not None:
-            residual = self.downsample(x)
-
-        out += residual
-        out = self.relu(out)
-
-        return out
 def identity(t):
     return t
 
@@ -166,12 +47,12 @@ def set_requires_grad(model, val):
         p.requires_grad = val
 
 
-def cutout_coordinates(image, ratio_range = (0.6, 0.8)):
+def cutout_coordinates(image, ratio_range = (0.7, 0.9)):
     _, _,orig_d,orig_w,orig_h = image.shape
 
     ratio_lo, ratio_hi = ratio_range
     random_ratio = ratio_lo + random.random() * (ratio_hi - ratio_lo)
-    d, w, h = floor(random_ratio * orig_d),floor(random_ratio * orig_w*0.4), floor(random_ratio * orig_h*0.9)
+    d, w, h = floor(random_ratio * orig_d),floor(random_ratio * orig_w), floor(random_ratio * orig_h)
     coor_x = floor((orig_d - d) * random.random())
     coor_y = floor((orig_w - w) * random.random())
     coor_z = floor((orig_h - h) * random.random())
@@ -291,14 +172,14 @@ class NetWrapper(nn.Module):
     def __init__(
         self,
         *,
-        net,
+        backbone,
         projection_size,
         projection_hidden_size,
         layer_pixel = -2,
         layer_instance = -2
     ):
         super().__init__()
-        self.net = net
+        self.backbone = backbone
         self.layer_pixel = layer_pixel
         self.layer_instance = layer_instance
 
@@ -314,10 +195,10 @@ class NetWrapper(nn.Module):
 
     def _find_layer(self, layer_id):
         if type(layer_id) == str:
-            modules = dict([*self.net.named_modules()])
+            modules = dict([*self.backbone.named_modules()])
             return modules.get(layer_id, None)
         elif type(layer_id) == int:
-            children = [*self.net.children()]
+            children = [*self.backbone.children()]
             return children[layer_id]
         return None
 
@@ -354,7 +235,7 @@ class NetWrapper(nn.Module):
         if not self.hook_registered:
             self._register_hook()
         #return self.net(x)
-        hidden_pixel,hidden_instance = self.net(x)
+        hidden_pixel,hidden_instance = self.backbone(x)
         self.hidden_pixel = None
         self.hidden_instance = None
         assert hidden_pixel is not None, f'hidden pixel layer {self.layer_pixel} never emitted an output'
@@ -421,7 +302,7 @@ class PixelCL(SegmentationNetwork):
         self.augment1 = default(augment_fn, DEFAULT_AUG)
         self.augment2 = default(augment_fn2, self.augment1)
         self.prob_rand_hflip = prob_rand_hflip
-        self.net = ResNeXt3D(ResNeXtBottleneck, [3, 4, 6, 3], num_classes=20)
+        self.backbone =  CNNBackbone.Backbone(depth=9, norm_cfg='BN', weight_std=False)
         self.do_ds = False
         norm_cfg = 'BN'
         activation_cfg = 'ReLU'
@@ -432,7 +313,7 @@ class PixelCL(SegmentationNetwork):
         self._deep_supervision = deep_supervision
         self.do_ds = deep_supervision
         self.online_encoder = NetWrapper(
-            net = self.net,
+            backbone = self.backbone,
             projection_size = projection_size,
             projection_hidden_size = projection_hidden_size,
             layer_pixel = hidden_layer_pixel,
@@ -462,7 +343,7 @@ class PixelCL(SegmentationNetwork):
         self.online_predictor = MLP(projection_size, projection_size, projection_hidden_size)
 
         # get device of network and make wrapper same device
-        device = get_module_device(self.net)
+        device = get_module_device(self.backbone)
         self.to(device)
         # send a mock image tensor to instantiate singleton parameters
         self.forward(torch.randn(2, 1, image_size[0], image_size[1],image_size[2], device=device))

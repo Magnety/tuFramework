@@ -318,6 +318,16 @@ class NetworkTrainer(object):
             self.initialize(train)
         # saved_model = torch.load(fname, map_location=torch.device('cuda', torch.cuda.current_device()))
         saved_model = torch.load(fname, map_location=torch.device('cpu'))
+        # print("pretrained:")
+        # for k in saved_model.keys():
+        # print(saved_model.keys())
+        # for k in saved_model['state_dict'].keys():
+        # print(k)
+
+        # print("network:")
+
+        # for k in self.network.state_dict().keys():
+        # print(k)
         self.load_checkpoint_ram(saved_model, train)
 
     @abstractmethod
@@ -347,17 +357,13 @@ class NetworkTrainer(object):
             self.initialize(train)
 
         new_state_dict = OrderedDict()
-        print("new_state_dict:",new_state_dict)
-
         curr_state_dict_keys = list(self.network.state_dict().keys())
-        print("curr_state_dict_keys:",curr_state_dict_keys)
-
         # if state dict comes form nn.DataParallel but we use non-parallel model here then the state dict keys do not
         # match. Use heuristic to make it match
         for k, value in checkpoint['state_dict'].items():
-            key = k
-            if key not in curr_state_dict_keys and key.startswith('module.'):
-                key = key[7:]
+            key = 'U_ResTran3D.' + k
+            """if key not in curr_state_dict_keys and key.startswith('module.'):
+                key = key[7:]"""
             new_state_dict[key] = value
 
         if self.fp16:
@@ -365,8 +371,8 @@ class NetworkTrainer(object):
             if 'amp_grad_scaler' in checkpoint.keys():
                 self.amp_grad_scaler.load_state_dict(checkpoint['amp_grad_scaler'])
 
-        self.network.load_state_dict(new_state_dict)
-        self.epoch = checkpoint['epoch']
+        self.network.load_state_dict(new_state_dict, strict=False)
+        """self.epoch = checkpoint['epoch']
         if train:
             optimizer_state_dict = checkpoint['optimizer_state_dict']
             if optimizer_state_dict is not None:
@@ -398,7 +404,7 @@ class NetworkTrainer(object):
             self.all_tr_losses = self.all_tr_losses[:self.epoch]
             self.all_val_losses = self.all_val_losses[:self.epoch]
             self.all_val_losses_tr_mode = self.all_val_losses_tr_mode[:self.epoch]
-            self.all_val_eval_metrics = self.all_val_eval_metrics[:self.epoch]
+            self.all_val_eval_metrics = self.all_val_eval_metrics[:self.epoch]"""
 
         self._maybe_init_amp()
 
@@ -426,7 +432,7 @@ class NetworkTrainer(object):
 
         self._maybe_init_amp()
 
-        maybe_mkdir_p(self.output_folder)        
+        maybe_mkdir_p(self.output_folder)
         self.plot_network_architecture()
 
         if cudnn.benchmark and cudnn.deterministic:

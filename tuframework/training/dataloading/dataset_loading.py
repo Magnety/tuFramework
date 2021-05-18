@@ -189,6 +189,7 @@ class DataLoader3D(SlimDataLoaderBase):
         self.has_prev_stage = has_prev_stage
         self.patch_size = patch_size
         self.list_of_keys = list(self._data.keys())
+        self.number_of_threads_in_multithreaded=16
         # need_to_pad denotes by how much we need to pad the data so that if we sample a patch of size final_patch_size
         # (which is what the network will get) these patches will also cover the border of the patients
         self.need_to_pad = (np.array(patch_size) - np.array(final_patch_size)).astype(int)

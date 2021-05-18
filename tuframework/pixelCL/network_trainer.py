@@ -411,6 +411,8 @@ class NetworkTrainer(object):
         pass
 
     def run_training(self):
+        #print("trainer:run training")
+
         if not torch.cuda.is_available():
             self.print_to_log_file("WARNING!!! You are attempting to run training on a CPU (torch.cuda.is_available() is False). This can be VERY slow!")
 
@@ -442,6 +444,7 @@ class NetworkTrainer(object):
             self.network.train()
 
             if self.use_progress_bar:
+                #print("TB")
                 with trange(self.num_batches_per_epoch) as tbar:
                     for b in tbar:
                         tbar.set_description("Epoch {}/{}".format(self.epoch+1, self.max_num_epochs))
@@ -451,12 +454,23 @@ class NetworkTrainer(object):
                         tbar.set_postfix(loss=l)
                         train_losses_epoch.append(l)
             else:
-                for _ in range(self.num_batches_per_epoch):
-                    l = self.run_iteration(self.tr_gen, True)
-                    train_losses_epoch.append(l)
+                #print("no TB")
 
+                for i in range(self.num_batches_per_epoch):
+                   # print("run_iterationing")
+                   # print("i:",i)
+                    #print(self.tr_gen)
+                    l = self.run_iteration(self.tr_gen, True)
+                   # print("run_iterationed")
+                    #print("train_losses_epoching")
+
+                    train_losses_epoch.append(l)
+                   # print("train_losses_epoched")
+
+            #print("print_to_log_fileing")
             self.all_tr_losses.append(np.mean(train_losses_epoch))
             self.print_to_log_file("train loss : %.4f" % self.all_tr_losses[-1])
+            #print("print_to_log_fileed")
 
             with torch.no_grad():
                 # validation with train=False
@@ -467,7 +481,7 @@ class NetworkTrainer(object):
                     val_losses.append(l)
                 self.all_val_losses.append(np.mean(val_losses))
                 self.print_to_log_file("validation loss: %.4f" % self.all_val_losses[-1])
-
+    
                 if self.also_val_in_tr_mode:
                     self.network.train()
                     # validation with train=True
@@ -624,6 +638,7 @@ class NetworkTrainer(object):
                                  self.all_tr_losses[-1]
 
     def run_iteration(self, data_generator, do_backprop=True, run_online_evaluation=False):
+        print("trainer:run iter")
         data_dict = next(data_generator)
         data = data_dict['data']
         target = data_dict['target']
